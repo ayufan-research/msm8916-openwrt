@@ -66,56 +66,32 @@ jobs:
       uses: actions/cache@v4
       with:
         path: openwrt/dl
-        key: openwrt-dl-${{ inputs.openwrt_branch }}-${{ hashFiles('openwrt/feeds.conf.default', 'diffconfig_*') }}
+        key: openwrt-dl-${{ inputs.openwrt_branch }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt.config') }}
         restore-keys: |
           openwrt-dl-${{ inputs.openwrt_branch }}-
           openwrt-dl-
 
-    - name: Cache OpenWrt build binaries
+    - name: Cache ccache
       uses: actions/cache@v4
       with:
-        path: |
-          openwrt/staging_dir
-          openwrt/build_dir
-        key: openwrt-build-${{ inputs.openwrt_branch }}-${{ hashFiles('openwrt/feeds.conf.default', 'diffconfig_*') }}
+        path: openwrt/.ccache
+        key: openwrt-ccache-${{ inputs.openwrt_branch }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt.config') }}
         restore-keys: |
-          openwrt-build-${{ inputs.openwrt_branch }}-
-          openwrt-build-
+          openwrt-ccache-${{ inputs.openwrt_branch }}-
+          openwrt-ccache-
 
     - name: Download package
       id: package
       run: |
-        cp "diffconfig_m9s" openwrt/.config
+        cp openwrt.config openwrt/.config
         cd openwrt
         make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \; || true
         find dl -size -1024c -exec rm -f {} \; || true
 
-    - name: Compile the firmware (M9S)
+    - name: Compile the firmware (MSM8916)
       run: |
-        cp diffconfig_m9s openwrt/.config
-        cd openwrt
-        make defconfig
-        make -j$(nproc) || make -j1 || make -j1 V=s
-
-    - name: Compile the firmware (MF68E)
-      run: |
-        cp diffconfig_mf68e openwrt/.config
-        cd openwrt
-        make defconfig
-        make -j$(nproc) || make -j1 || make -j1 V=s
-
-    - name: Compile the firmware (UF02)
-      run: |
-        cp diffconfig_uf02 openwrt/.config
-        cd openwrt
-        make defconfig
-        make -j$(nproc) || make -j1 || make -j1 V=s
-
-    - name: Compile the firmware (UZ801)
-      run: |
-        cp diffconfig_uz801 openwrt/.config
         cd openwrt
         make defconfig
         make -j$(nproc) || make -j1 || make -j1 V=s
