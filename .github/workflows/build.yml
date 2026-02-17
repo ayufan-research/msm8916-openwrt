@@ -123,7 +123,8 @@ jobs:
     - name: Prepare firmware files
       run: |
         mkdir -p firmware
-        find openwrt/bin/targets -type f -name "openwrt-msm89xx-*" -exec cp {} firmware/ \;
+        cp -rv openwrt/bin/targets/msm89xx/msm8916/openwrt-msm89xx-* firmware/
+        cp -rv openwrt/bin/targets/msm89xx/msm8916/packages firmware/
         echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
     - name: Upload firmware
@@ -152,6 +153,7 @@ jobs:
           device=$(basename "$manifest" .manifest | sed 's/openwrt-msm89xx-msm8916-//')
           zip ../../openwrt-msm89xx-msm8916-${device}-firmware.zip openwrt-msm89xx-msm8916-${device}*
         done
+        zip -jr ../../openwrt-msm89xx-msm8916-packages.zip packages/
 
     - name: Create release
       uses: softprops/action-gh-release@v1
@@ -161,6 +163,6 @@ jobs:
         body: |
           OpenWrt firmware build for all variants
           Branch: ${{ inputs.openwrt_branch }}
-        files: openwrt-msm89xx-msm8916-*-firmware.zip
+        files: openwrt-msm89xx-msm8916-*.zip
         draft: false
         prerelease: false
