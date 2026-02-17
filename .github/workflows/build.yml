@@ -71,21 +71,21 @@ jobs:
           openwrt-dl-${{ inputs.openwrt_branch }}-
           openwrt-dl-
 
-    - name: Cache OpenWrt build binaries
+    - name: Cache ccache
       uses: actions/cache@v4
       with:
-        path: |
-          openwrt/staging_dir
-          openwrt/build_dir
-        key: openwrt-build-${{ inputs.openwrt_branch }}-${{ hashFiles('openwrt/feeds.conf.default', 'diffconfig_*') }}
+        path: openwrt/.ccache
+        key: openwrt-ccache-${{ inputs.openwrt_branch }}-${{ github.sha }}
         restore-keys: |
-          openwrt-build-${{ inputs.openwrt_branch }}-
-          openwrt-build-
+          openwrt-ccache-${{ inputs.openwrt_branch }}-
+          openwrt-ccache-
 
     - name: Download package
       id: package
       run: |
         cp "diffconfig_m9s" openwrt/.config
+        echo "CONFIG_DEVEL=y" >> openwrt/.config
+        echo "CONFIG_CCACHE=y" >> openwrt/.config
         cd openwrt
         make defconfig
         make download -j8
@@ -95,6 +95,8 @@ jobs:
     - name: Compile the firmware (M9S)
       run: |
         cp diffconfig_m9s openwrt/.config
+        echo "CONFIG_DEVEL=y" >> openwrt/.config
+        echo "CONFIG_CCACHE=y" >> openwrt/.config
         cd openwrt
         make defconfig
         make -j$(nproc) || make -j1 || make -j1 V=s
@@ -102,6 +104,8 @@ jobs:
     - name: Compile the firmware (MF68E)
       run: |
         cp diffconfig_mf68e openwrt/.config
+        echo "CONFIG_DEVEL=y" >> openwrt/.config
+        echo "CONFIG_CCACHE=y" >> openwrt/.config
         cd openwrt
         make defconfig
         make -j$(nproc) || make -j1 || make -j1 V=s
@@ -109,6 +113,8 @@ jobs:
     - name: Compile the firmware (UF02)
       run: |
         cp diffconfig_uf02 openwrt/.config
+        echo "CONFIG_DEVEL=y" >> openwrt/.config
+        echo "CONFIG_CCACHE=y" >> openwrt/.config
         cd openwrt
         make defconfig
         make -j$(nproc) || make -j1 || make -j1 V=s
@@ -116,6 +122,8 @@ jobs:
     - name: Compile the firmware (UZ801)
       run: |
         cp diffconfig_uz801 openwrt/.config
+        echo "CONFIG_DEVEL=y" >> openwrt/.config
+        echo "CONFIG_CCACHE=y" >> openwrt/.config
         cd openwrt
         make defconfig
         make -j$(nproc) || make -j1 || make -j1 V=s
