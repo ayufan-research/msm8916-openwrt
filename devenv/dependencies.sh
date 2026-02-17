@@ -12,7 +12,7 @@ apt-get update && apt-get install -y --no-install-recommends \
     flex gawk rsync swig \
     g++ gcc gcc-aarch64-linux-gnu gcc-arm-none-eabi \
     gettext intltool \
-    git \
+    git ccache \
     gzip tar unzip xz-utils zstd zip \
     libelf-dev libfdt-dev libncurses5-dev libssl-dev zlib1g-dev \
     nano sudo \
