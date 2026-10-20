@@ -89,11 +89,44 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
+    - name: Cache OpenWrt downloads
+      uses: actions/cache@v4
+      with:
+        path: openwrt/dl
+        key: openwrt-dl-${{ needs.resolve-version.outputs.openwrt_version }}
+        restore-keys: |
+          openwrt-dl-
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: openwrt/.ccache
+        key: openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-${{ matrix.device }}-${{ github.run_id }}
+        restore-keys: |
+          openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-${{ matrix.device }}-
+          openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-
+          openwrt-ccache-
+
+    - name: Configure ccache
+      run: |
+        echo "/usr/lib/ccache" >> $GITHUB_PATH
+        export CCACHE_DIR="$GITHUB_WORKSPACE/openwrt/.ccache"
+        echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
+        ccache -M 5G
+        ccache -s
+
     - name: Load diffconfig
       run: |
         DEVICE="${{ matrix.device }}"
         DIFFCONFIG="diffconfig_${DEVICE}"
-        [ -f "$DIFFCONFIG" ] && mv "$DIFFCONFIG" openwrt/.config
+        if [ ! -f "$DIFFCONFIG" ]; then
+          echo "ERROR: $DIFFCONFIG not found"
+          exit 1
+        fi
+        cp "$DIFFCONFIG" openwrt/.config
+        # route the build through ccache (CONFIG_CCACHE needs CONFIG_DEVEL)
+        echo "CONFIG_DEVEL=y" >> openwrt/.config
+        echo "CONFIG_CCACHE=y" >> openwrt/.config
 
     - name: Download package
       id: package
@@ -109,6 +142,7 @@ jobs:
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
+        ccache -s
         echo "status=success" >> $GITHUB_OUTPUT
         echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
@@ -117,7 +151,6 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -133,3 +166,4 @@ jobs:
           ${{ env.FIRMWARE }}/openwrt-msm89xx-*.manifest
           ${{ env.FIRMWARE }}/openwrt-msm89xx-*-flash.sh
           ${{ env.FIRMWARE }}/openwrt-msm89xx-*-firmware.zip
+          ${{ env.FIRMWARE }}/packages
