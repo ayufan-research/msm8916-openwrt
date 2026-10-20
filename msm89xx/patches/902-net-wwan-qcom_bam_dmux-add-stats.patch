@@ -1,0 +1,43 @@
+--- a/drivers/net/wwan/qcom_bam_dmux.c	2026-02-17 10:30:26.234137395 +0100
++++ b/drivers/net/wwan/qcom_bam_dmux.c	2026-02-17 10:32:22.549960264 +0100
+@@ -178,8 +178,15 @@
+ static void bam_dmux_tx_callback(void *data)
+ {
+ 	struct bam_dmux_skb_dma *skb_dma = data;
++	struct bam_dmux *dmux = skb_dma->dmux;
+ 	struct sk_buff *skb = skb_dma->skb;
++	struct bam_dmux_hdr *hdr = (struct bam_dmux_hdr *)skb->data;
++	struct net_device *netdev = dmux->netdevs[hdr->ch];
+ 
++	if (netdev && hdr->cmd == BAM_DMUX_CMD_DATA) {
++		netdev->stats.tx_packets++;
++		netdev->stats.tx_bytes += hdr->len;
++	}
+ 	bam_dmux_tx_done(skb_dma);
+ 	dev_consume_skb_any(skb);
+ }
+@@ -369,6 +376,7 @@
+ 	return NETDEV_TX_OK;
+ 
+ drop:
++	netdev->stats.tx_dropped++;
+ 	bam_dmux_tx_done(skb_dma);
+ 	dev_kfree_skb_any(skb);
+ 	return NETDEV_TX_OK;
+@@ -514,6 +522,7 @@
+ 	if (hdr->len > BAM_DMUX_MAX_DATA_SIZE) {
+ 		dev_err(dmux->dev, "Data larger than buffer? (%u > %u)\n",
+ 			hdr->len, (u16)BAM_DMUX_MAX_DATA_SIZE);
++		netdev->stats.rx_errors++;
+ 		return;
+ 	}
+ 
+@@ -536,6 +545,8 @@
+ 		break;
+ 	}
+ 
++	netdev->stats.rx_packets++;
++	netdev->stats.rx_bytes += skb->len;
+ 	netif_receive_skb(skb);
+ }
+ 

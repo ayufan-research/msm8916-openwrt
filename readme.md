@@ -36,7 +36,7 @@ MF68E and M9S are no longer part of the default build. Their support lives in th
 
 ### Working Components
 - **Modem**: Fully functional with cellular connectivity
-  - ModemManager Rx/Tx stats not displayed in LuCI (known issue)
+  - Rx/Tx statistics reported by the `qcom_bam_dmux` driver (patch `902`), so they show up in `ip -s link` and LuCI
 - **WiFi**: Complete wireless support
 - **USB Gadget Modes**: NCM, RNDIS, Mass Storage, ACM Shell
   - Configure via [UCI](packages/uci-usb-gadget/readme.md) or LuCI app
