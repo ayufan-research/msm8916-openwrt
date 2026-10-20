@@ -1,5 +1,5 @@
-# MiFi-style device definitions (MF68E, M9S) - dropped into
-# msm89xx/image/ by enable_tbr.sh, picked up by msm8916.mk.
+# MiFi-style device definitions (MF68E, M9S), picked up by the
+# devices-*.mk wildcard include in msm8916.mk.
 
 define Device/generic-mf68e
   $(Device/msm8916)

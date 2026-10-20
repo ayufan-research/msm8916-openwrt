@@ -7,6 +7,7 @@ Modern OpenWrt build targeting MSM8916 devices with full modem, USB gadget, and 
 - [About OpenWrt](#about-openwrt)
 - [Supported Devices](#supported-devices)
 - [Features](#features)
+- [Repository Layout](#repository-layout)
 - [Prerequisites](#prerequisites)
 - [Building](#building)
 - [Installation](#installation)
@@ -30,7 +31,7 @@ All devices use the Qualcomm MSM8916 SoC with 384 MB RAM and 4 GB eMMC.
 - **UZ801v3** (`yiming-uz801v3`) -- USB dongle form factor.
 - **UF02** (`generic-uf02`) -- USB dongle form factor, most likely with only asian bands. Can be somewhat changed via QPST and the `qcn` file from UZ801.
 
-MF68E and M9S are no longer part of the default build. Their support lives in the [TBR](TBR/readme.md) directory and is enabled with `./enable_tbr.sh`.
+MF68E and M9S are no longer part of the default build. Their support lives in [openwrt-with-display](openwrt-with-display/readme.md), which is applied automatically when you build for `m9s` or `mf68e`.
 
 ## Features
 
@@ -51,6 +52,33 @@ MF68E and M9S are no longer part of the default build. Their support lives in th
 ### Additional Packages
 - **Tailscale**: LuCI app available as standalone package (APK and IPK)
 
+## Repository Layout
+
+The repository holds OpenWrt tree overlays plus the patches that go on top of
+the OpenWrt checkout. `.github/dev/setup.sh` copies and applies them, nothing
+is built in place:
+
+```
+openwrt-base/                always applied
+  root/                      copied into the OpenWrt checkout as-is
+    target/linux/msm89xx/    the target: Makefile, kernel config and patches,
+                             base-files, image recipes
+    package/msm8916/         our packages
+  patches/                   applied with patch -p1 in the checkout
+  configs/                   diffconfig per device
+openwrt-with-display/        the same three, for MF68E and M9S
+.github/dev/Dockerfile       the build environment, declared once
+.github/dev/setup.sh         copy the overlays, apply the patches, install a config
+build.sh                     build the image and build OpenWrt in it (CI too)
+```
+
+An overlay owns its device configs, and the overlay follows the config:
+`setup.sh --config m9s` finds `openwrt-with-display/configs/diffconfig_m9s` and
+applies `openwrt-with-display` with it. Adding a device means a device tree
+patch under `.../msm89xx/patches/`, a `Device/...` definition in `image/msm8916.mk`
+(or a drop-in `image/devices-*.mk`), and a `configs/diffconfig_<device>` in the
+overlay it belongs to.
+
 ## Prerequisites
 
 - Docker installed on your system
@@ -61,31 +89,61 @@ MF68E and M9S are no longer part of the default build. Their support lives in th
 
 ### GitHub Actions (release builds)
 
-GHA workflows automatically resolve the **latest OpenWrt 25.12.x** tag. Trigger manually from the Actions tab:
+`build.yml` defaults to the newest **OpenWrt 25.12.x** tag. Trigger it manually
+from the Actions tab:
 
-- **Build firmware**: `build.yml` — select a device (`uz801`, `uf02`, `all`, or `m9s`/`mf68e`/`all+tbr` for the [deprecated devices](TBR/readme.md))
-- **Build packages**: `build-package.yml` — builds `luci-app-tailscale`, `uci-usb-gadget`, and `luci-app-usb-gadget` in APK and IPK formats
+- **Build firmware**: `build.yml` — pick a device (`all` builds every config, including the ones [with a display](openwrt-with-display/readme.md)), an OpenWrt branch, tag or tag pattern (`v25.12.*` by default), and extra packages to build into the image; the image builder and the SDK are built too unless you turn them off
+- **Release**: tick *Publish a GitHub release* and `build.yml` publishes one archive per device once the builds pass. The tag names what it is - the OpenWrt version plus the commit that built it, `v25.12.6-abb94ec` - with an optional suffix of your own and a *prerelease* checkbox
+
+It builds every selected config in one job through `build.sh`, so the toolchain
+is built once and CI and local builds share one container image. It uploads the
+flashable images, the sysupgrade image, the package feed built with them, and
+the image builder and SDK.
 
 ### Local (snapshot builds)
 
-1. Build the environment (defaults to OpenWrt `main`/snapshot):
+`build.sh` builds the container image, clones OpenWrt into `./openwrt`, applies
+the overlays, installs the feeds and the device config, then builds. The
+checkout stays on the host, so downloads and build artifacts survive between
+runs. It needs a device, as `--device` or `$DEVICE`; `./build.sh --help` prints
+the options and the devices the overlays carry.
+
 ```
-cd devenv
-docker compose build builder
+./build.sh --device uz801             # build the images (OpenWrt main/snapshot)
+./build.sh --device uz801 --shell     # shell in the tree instead of building
+./build.sh -d uz801 make menuconfig   # or any other command, run in the tree
 ```
 
-2. Enter and build:
+Other devices, and other OpenWrt versions:
+
 ```
-docker compose run --rm builder
-cp /repo/diffconfig_uz801 .config
-make defconfig
-make -j$(nproc)
+./build.sh -d uf02
+./build.sh -d m9s                                  # pulls in openwrt-with-display
+OPENWRT_VERSION=v25.12.6 ./build.sh -d uz801
+OPENWRT_VERSION='v25.12.*' ./build.sh -d uz801     # newest 25.12.x tag
 ```
 
-To build a specific release locally:
+Building a second device reuses the tree: the config is swapped, `make
+defconfig` re-run, and the toolchain and staging directory stay, so only the
+kernel and the images are rebuilt.
+
 ```
-OPENWRT_VERSION=v24.10.2 docker compose build builder --no-cache
+./build.sh -d uz801
+./build.sh -d uf02             # same toolchain
+./build.sh -d m9s --clean      # other overlay, undo first
 ```
+
+`--clean` undoes the overlays in the checkout (the copied files are deleted and
+the patched ones restored from git) and cleans the kernel so its patches are
+re-applied; `dl/`, `.ccache/` and the build directories are left alone. It is
+needed when the set of overlays changes, which is why `build.yml` passes it at
+the point where it moves on to the devices with a display.
+
+`build.sh` re-applies the overlays on every invocation, so changes under
+`openwrt-base/` or `openwrt-with-display/` are picked up. An edited `.config`
+survives as long as the device stays the same (`--force-config` replaces it).
+Run `.github/dev/setup.sh --config <device> openwrt` by hand if you drive
+`make` yourself.
 
 > **Supported versions:** OpenWrt 25.12.x and current snapshots (kernel 6.12). OpenWrt 24.10.x (kernel 6.6) compiles but does not boot — the Makefile supports it via `KERNEL_FOR_24` (currently commented out) if someone wants to investigate further.
 

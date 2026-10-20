@@ -4,17 +4,83 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: 'Target device (all = supported devices, all+tbr = also deprecated MF68E/M9S)'
+        description: 'Target device (all = uz801 and uf02)'
         required: false
         type: choice
         default: all
         options:
           - all
-          - all+tbr
           - uz801
           - uf02
           - m9s
           - mf68e
+      openwrt_version:
+        description: 'OpenWrt branch, tag, or tag pattern (newest match wins)'
+        required: false
+        type: string
+        default: 'v25.12.*'
+      packages:
+        description: 'Extra packages to build into the image (space separated)'
+        required: false
+        type: string
+      imagebuilder:
+        description: 'Build the image builder'
+        required: false
+        type: boolean
+        default: true
+      sdk:
+        description: 'Build the SDK'
+        required: false
+        type: boolean
+        default: true
+      release:
+        description: 'Publish a GitHub release (tag: <openwrt>-<sha>)'
+        required: false
+        type: boolean
+        default: false
+      release_suffix:
+        description: 'Appended to the generated release tag'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark the release as a prerelease'
+        required: false
+        type: boolean
+        default: false
+
+  # callable from another workflow
+  workflow_call:
+    inputs:
+      device:
+        required: false
+        type: string
+        default: all
+      openwrt_version:
+        required: false
+        type: string
+        default: 'v25.12.*'
+      packages:
+        required: false
+        type: string
+      imagebuilder:
+        required: false
+        type: boolean
+        default: true
+      sdk:
+        required: false
+        type: boolean
+        default: true
+      release:
+        required: false
+        type: boolean
+        default: false
+      release_suffix:
+        required: false
+        type: string
+      prerelease:
+        required: false
+        type: boolean
+        default: false
 
 env:
   UPLOAD_FIRMWARE: true
@@ -25,69 +91,98 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       openwrt_version: ${{ steps.resolve.outputs.version }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
-    - name: Resolve latest stable OpenWrt 25.12.x tag
+    - name: Resolve the OpenWrt version
       id: resolve
+      # through the environment, so neither input is pasted into the script
+      env:
+        OPENWRT_INPUT: ${{ inputs.openwrt_version }}
+        RELEASE_SUFFIX: ${{ inputs.release_suffix }}
       run: |
-        VERSION=$(git ls-remote --tags https://git.openwrt.org/openwrt/openwrt.git 'v25.12.*' \
-          | grep -oP 'v25\.12\.\d+$' | sort -V | tail -1)
-        if [ -z "$VERSION" ]; then
-          echo "ERROR: Could not resolve a stable OpenWrt 25.12.x version"
-          exit 1
-        fi
-        echo "Resolved OpenWrt version: $VERSION"
+        VERSION="${OPENWRT_INPUT:-v25.12.*}"
+
+        # a pattern resolves to the newest matching tag, anything else is a
+        # branch or tag and is used as it is
+        case "$VERSION" in
+          *'*'*|*'?'*)
+            PATTERN="$VERSION"
+            VERSION=$(git ls-remote --tags https://git.openwrt.org/openwrt/openwrt.git "$PATTERN" \
+              | sed 's|.*refs/tags/||' | grep -v '\^{}$' | sort -V | tail -1)
+            if [ -z "$VERSION" ]; then
+              echo "ERROR: no OpenWrt tag matches $PATTERN"
+              exit 1
+            fi
+            echo "Resolved $PATTERN -> $VERSION"
+            ;;
+        esac
+
+        echo "Using OpenWrt $VERSION"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+        # the release names itself after what it is: the OpenWrt version it was
+        # built from and the commit of this repository that built it, so the
+        # same commit and version always produce the same tag
+        SUFFIX="$RELEASE_SUFFIX"
+        TAG="$VERSION-${GITHUB_SHA:0:7}${SUFFIX:+-${SUFFIX#-}}"
+
+        # whatever a branch name or a suffix carries, a tag cannot
+        TAG=$(printf '%s' "$TAG" | tr -c 'A-Za-z0-9._-' '-' | sed 's|^-*||; s|-*$||')
+
+        echo "Release tag: $TAG"
+        echo "release_tag=$TAG" >> $GITHUB_OUTPUT
 
   build:
     needs: resolve-version
     runs-on: ubuntu-22.04
 
-    strategy:
-      fail-fast: false
-      matrix:
-        device: ${{ fromJSON((inputs.device == 'all' || inputs.device == '') && '["uz801","uf02"]' || inputs.device == 'all+tbr' && '["uz801","uf02","m9s","mf68e"]' || format('["{0}"]', inputs.device)) }}
+    env:
+      OPENWRT_VERSION: ${{ needs.resolve-version.outputs.openwrt_version }}
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
     - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
-        sudo -E apt-get -qq update
-        sudo -E ./devenv/dependencies.sh
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
 
-    - name: Clone OpenWrt source code
+    # Every device is built in this one job, swapping .config between them, so
+    # the toolchain and the staging directory are built once. The configs are
+    # ordered so that the ones sharing an overlay follow each other, and the
+    # tree is only cleaned when the overlays change.
+    - name: Select the device configs
       run: |
-        echo "Using OpenWrt ${{ needs.resolve-version.outputs.openwrt_version }}"
-        git clone https://git.openwrt.org/openwrt/openwrt.git openwrt
-        git -C openwrt checkout ${{ needs.resolve-version.outputs.openwrt_version }}
+        DEVICE="${{ inputs.device }}"
 
-    - name: Enable TBR device support
-      if: matrix.device == 'm9s' || matrix.device == 'mf68e'
-      run: |
-        chmod +x enable_tbr.sh
-        ./enable_tbr.sh
+        if [ -n "$DEVICE" ] && [ "$DEVICE" != "all" ]; then
+          DEVICES="$DEVICE"
+        else
+          # one line per device would break $GITHUB_ENV, so keep them on one
+          DEVICES=$(ls openwrt-*/configs/diffconfig_* | sed 's|.*/diffconfig_||' | tr '\n' ' ')
+        fi
 
-    - name: Load msm89xx target and packages
-      run: |
-        chmod +x apply_patches.sh
-        ./apply_patches.sh openwrt
-        mv msm89xx openwrt/target/linux/msm89xx
-        mv packages openwrt/package/msm8916
+        echo "Building: $DEVICES"
+        echo "DEVICES=$DEVICES" >> $GITHUB_ENV
 
-    - name: Update and install feeds
+    # build.sh appends this to the device config of the overlay it applies
+    - name: Compose the extra configuration
       run: |
-        cd openwrt
-        rm -rf tmp
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+        {
+          echo "EXTRA_CONFIG<<GHA_EOF"
+          for pkg in ${{ inputs.packages }}; do
+            echo "CONFIG_PACKAGE_${pkg}=y"
+          done
+          if [ "${{ inputs.imagebuilder }}" = "true" ]; then
+            echo "CONFIG_IB=y"
+          fi
+          if [ "${{ inputs.sdk }}" = "true" ]; then
+            echo "CONFIG_SDK=y"
+          fi
+          echo "GHA_EOF"
+        } >> $GITHUB_ENV
 
     - name: Cache OpenWrt downloads
       uses: actions/cache@v4
@@ -101,50 +196,58 @@ jobs:
       uses: actions/cache@v4
       with:
         path: openwrt/.ccache
-        key: openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-${{ matrix.device }}-${{ github.run_id }}
+        key: openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-${{ github.run_id }}
         restore-keys: |
-          openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-${{ matrix.device }}-
           openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-
           openwrt-ccache-
 
-    - name: Configure ccache
-      run: |
-        echo "/usr/lib/ccache" >> $GITHUB_PATH
-        export CCACHE_DIR="$GITHUB_WORKSPACE/openwrt/.ccache"
-        echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
-        ccache -M 5G
-        ccache -s
-
-    - name: Load diffconfig
-      run: |
-        DEVICE="${{ matrix.device }}"
-        DIFFCONFIG="diffconfig_${DEVICE}"
-        if [ ! -f "$DIFFCONFIG" ]; then
-          echo "ERROR: $DIFFCONFIG not found"
-          exit 1
-        fi
-        cp "$DIFFCONFIG" openwrt/.config
-        # route the build through ccache (CONFIG_CCACHE needs CONFIG_DEVEL)
-        echo "CONFIG_DEVEL=y" >> openwrt/.config
-        echo "CONFIG_CCACHE=y" >> openwrt/.config
-
-    - name: Download package
-      id: package
-      run: |
-        cd openwrt
-        make defconfig
-        make download -j8
-        find dl -size -1024c -exec rm -f {} \; || true
-
-    - name: Compile the firmware
+    # build.sh builds the image from .github/dev/Dockerfile, fetches OpenWrt,
+    # applies the overlay that owns the config, installs the feeds and that
+    # config, then runs the command in the tree. Called again with another
+    # DEVICE it swaps the config and keeps everything else.
+    - name: Build the firmware
       id: compile
       run: |
-        cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        ccache -s
+        first=1
+        previous=
+
+        for device in $DEVICES; do
+          owner=$(ls -d openwrt-*/configs/diffconfig_"$device" | head -1)
+          owner="${owner%%/*}"
+
+          # the overlay this device needs on top of openwrt-base, if any
+          overlay=
+          [ "$owner" = "openwrt-base" ] || overlay="$owner"
+
+          # a different overlay means the tree has to be undone first
+          clean=
+          if [ -z "$first" ] && [ "$overlay" != "$previous" ]; then
+            clean=1
+          fi
+
+          echo "::group::$device${overlay:+ ($overlay)}${clean:+ [clean]}"
+          export DEVICE="$device" OVERLAY="$overlay" CLEAN="$clean"
+
+          ./build.sh make download -j8
+          find openwrt/dl -size -1024c -exec rm -f {} \; || true
+
+          # the tree is set up now, do not undo it again for the build itself
+          export CLEAN=
+
+          ./build.sh make -j$(nproc) || ./build.sh make -j1 || ./build.sh make -j1 V=s
+          echo "::endgroup::"
+
+          first=
+          previous="$overlay"
+        done
+
         echo "status=success" >> $GITHUB_OUTPUT
         echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: ccache statistics
+      if: always()
+      # build.sh wants a device even when the command does not care about it
+      run: ./build.sh --device "${DEVICES%% *}" env CCACHE_DIR=.ccache ccache -s || true
 
     - name: Organize files
       id: organize
@@ -158,12 +261,80 @@ jobs:
       uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: openwrt_firmware_${{ matrix.device }}_${{needs.resolve-version.outputs.openwrt_version}}_${{ env.FILE_DATE }}
+        name: openwrt_firmware_${{ inputs.device }}_${{needs.resolve-version.outputs.openwrt_version}}_${{ env.FILE_DATE }}
         path: |
-          ${{ env.FIRMWARE }}/openwrt-msm89xx-*-squashfs-gpt_both0.bin
-          ${{ env.FIRMWARE }}/openwrt-msm89xx-*-squashfs-boot.img
-          ${{ env.FIRMWARE }}/openwrt-msm89xx-*-squashfs-system.img
-          ${{ env.FIRMWARE }}/openwrt-msm89xx-*.manifest
-          ${{ env.FIRMWARE }}/openwrt-msm89xx-*-flash.sh
-          ${{ env.FIRMWARE }}/openwrt-msm89xx-*-firmware.zip
+          ${{ env.FIRMWARE }}/*-squashfs-gpt_both0.bin
+          ${{ env.FIRMWARE }}/*-squashfs-boot.img
+          ${{ env.FIRMWARE }}/*-squashfs-system.img
+          ${{ env.FIRMWARE }}/*-squashfs-sysupgrade.bin
+          ${{ env.FIRMWARE }}/*.manifest
+          ${{ env.FIRMWARE }}/*-flash.sh
+          ${{ env.FIRMWARE }}/*-firmware.zip
+          ${{ env.FIRMWARE }}/openwrt-imagebuilder-*
+          ${{ env.FIRMWARE }}/openwrt-sdk-*
           ${{ env.FIRMWARE }}/packages
+
+  # only when the run asked for a release
+  release:
+    needs: [resolve-version, build]
+    if: inputs.release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download the firmware artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    # one archive per device, out of the images that share a manifest
+    - name: Create the release archives
+      run: |
+        mkdir -p release
+        cd artifacts/openwrt_firmware_*
+
+        for manifest in *.manifest; do
+          [ -e "$manifest" ] || continue
+          base="${manifest%.manifest}"
+          zip -qj "$GITHUB_WORKSPACE/release/${base}.zip" "$base"*
+          echo "packed ${base}.zip"
+        done
+
+        for extra in openwrt-imagebuilder-* openwrt-sdk-*; do
+          [ -e "$extra" ] || continue
+          cp "$extra" "$GITHUB_WORKSPACE/release/"
+          echo "added $extra"
+        done
+
+        if [ -d packages ]; then
+          zip -qr "$GITHUB_WORKSPACE/release/packages.zip" packages
+          echo "packed packages.zip"
+        fi
+
+        if [ -z "$(ls -A "$GITHUB_WORKSPACE/release")" ]; then
+          echo "ERROR: the build produced no artifacts to release"
+          exit 1
+        fi
+
+        ls -lh "$GITHUB_WORKSPACE/release"
+
+    - name: Create the release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ needs.resolve-version.outputs.release_tag }}
+        name: ${{ needs.resolve-version.outputs.release_tag }}
+        body: |
+          OpenWrt firmware for MSM8916 devices.
+
+          - Device: `${{ inputs.device }}`
+          - OpenWrt: `${{ needs.resolve-version.outputs.openwrt_version }}`
+          - Extra packages: `${{ inputs.packages }}`
+          - Built from `${{ github.sha }}`
+
+          Each archive holds the flashable images (`gpt_both0.bin`, `boot.img`,
+          `system.img`), the sysupgrade image, `flash.sh`, the package feed, and
+          the image builder and SDK when they were built.
+        files: release/*
+        draft: false
+        prerelease: ${{ inputs.prerelease }}
