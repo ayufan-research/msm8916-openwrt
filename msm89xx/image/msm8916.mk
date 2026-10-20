@@ -52,4 +52,7 @@ define Device/generic-uf02
 endef
 TARGET_DEVICES += generic-uf02
 
+# Optional drop-in device definitions (see TBR/readme.md, enable_tbr.sh)
+include $(sort $(wildcard $(TOPDIR)/target/linux/$(BOARD)/image/devices-*.mk))
+
 endif

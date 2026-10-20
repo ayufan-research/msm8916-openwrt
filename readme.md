@@ -30,7 +30,7 @@ All devices use the Qualcomm MSM8916 SoC with 384 MB RAM and 4 GB eMMC.
 - **UZ801v3** (`yiming-uz801v3`) -- USB dongle form factor.
 - **UF02** (`generic-uf02`) -- USB dongle form factor, most likely with only asian bands. Can be somewhat changed via QPST and the `qcn` file from UZ801.
 
-MF68E and M9S device support has been moved to the [TBR](TBR/readme.md) directory for reference. See that README for re-integration instructions.
+MF68E and M9S are no longer part of the default build. Their support lives in the [TBR](TBR/readme.md) directory and is enabled with `./enable_tbr.sh`.
 
 ## Features
 
@@ -63,7 +63,7 @@ MF68E and M9S device support has been moved to the [TBR](TBR/readme.md) director
 
 GHA workflows automatically resolve the **latest OpenWrt 25.12.x** tag. Trigger manually from the Actions tab:
 
-- **Build firmware**: `build.yml` — select a device (`uz801`, `uf02`, or `all`)
+- **Build firmware**: `build.yml` — select a device (`uz801`, `uf02`, `all`, or `m9s`/`mf68e`/`all+tbr` for the [deprecated devices](TBR/readme.md))
 - **Build packages**: `build-package.yml` — builds `luci-app-tailscale`, `uci-usb-gadget`, and `luci-app-usb-gadget` in APK and IPK formats
 
 ### Local (snapshot builds)

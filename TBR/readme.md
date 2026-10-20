@@ -1,52 +1,43 @@
 # TBR - Deprecated Device Support (MF68E, M9S)
 
-These files were removed from the main build but are kept here for reference.
-They supported MiFi-style devices (MF68E, M9S) with displays, battery monitoring
-and power button handling.
+These files were removed from the main build but are kept here so the devices
+can still be built. They support MiFi-style devices (MF68E, M9S) with displays,
+battery monitoring and power button handling.
 
-## How to re-integrate
+## How to enable
 
-### 1. Device definitions
-
-Add the contents of `msm8916.mk.devices` to `msm89xx/image/msm8916.mk`,
-before the `endif` line.
-
-### 2. Kernel patches
-
-Copy the patches back into `msm89xx/patches-6.12/`:
+From the repository root:
 
 ```sh
-cp patches/802-arm64-dts-qcom-add-msm8916-generic-mf68e.patch ../msm89xx/patches-6.12/
-cp patches/805-arm64-dts-qcom-add-msm8916-generic-m9s.patch   ../msm89xx/patches-6.12/
-cp patches/901-fbtft-fb_gc9107.patch                           ../msm89xx/patches-6.12/
+./enable_tbr.sh
 ```
 
-The `801-...patch.orig` only adds mf68e and m9s (UF02 is already handled
-by the active `801` patch). Both patches touch different lines so they
-apply cleanly one after another.
+That copies everything into place; `./enable_tbr.sh --disable` removes it again.
+Nothing tracked by git is edited, and the copied paths are gitignored, so the
+working tree stays clean either way.
 
-### 3. Packages
-
-Move the packages back into the `packages/` directory:
+Then build as usual, with `diffconfig_m9s` or `diffconfig_mf68e`:
 
 ```sh
-cp -r packages/configs-mifi   ../packages/
-cp -r packages/router-display  ../packages/
-cp -r packages/fbtft-gc9107    ../packages/
+cd devenv
+docker compose run --rm builder
+cp /repo/diffconfig_m9s .config
+make defconfig
+make -j$(nproc)
 ```
 
-These packages provide:
-- **configs-mifi**: UCI defaults, LED hotplugs, battery monitoring, power button
-  handling, and a pre-built Tailscale APK for MiFi devices.
-- **router-display**: SPI display manager (GC9107) with boot/shutdown logos and
-  status display for MF68E.
-- **fbtft-gc9107**: Kernel module for the GC9107 framebuffer (SPI display).
+In GitHub Actions, pick `m9s`, `mf68e` or `all+tbr` as the device in
+`build.yml` - the workflow runs `enable_tbr.sh` for those jobs itself.
 
-### 4. Diffconfigs
+## Layout
 
-Move `diffconfig_m9s` and `diffconfig_mf68e` back to the repository root.
+| Path | Copied to | Contents |
+| --- | --- | --- |
+| `packages/` | `packages/` | `configs-mifi` (UCI defaults, LED hotplugs, battery monitoring, power button, prebuilt Tailscale APK), `ledcontrol` (sysfs LED helper the hotplug scripts call), `router-display` (GC9107 SPI display manager with boot/shutdown logos), `fbtft-gc9107` (framebuffer kernel module), `rootfs-resizer` |
+| `patches/` | `msm89xx/patches/` | MF68E and M9S device trees plus the `fb_gc9107` fbtft driver. Each device tree patch registers its own dtb in the kernel's `qcom/Makefile`, so they apply cleanly next to the patches of the supported devices. |
+| `image/devices-mifi.mk` | `msm89xx/image/` | `generic-mf68e` and `generic-m9s` device definitions, picked up by the `devices-*.mk` wildcard include in `msm8916.mk` |
+| `diffconfig_m9s`, `diffconfig_mf68e` | repository root | Build configs for the two devices |
 
-### 5. CI/CD
-
-Add `m9s` and `mf68e` back to the device matrix in `.github/workflows/build-all.yml`
-and the choice options in `.github/workflows/build.yml`.
+`reference/` is not used by the build: it holds the old `git apply` style
+mac80211 patch (superseded by `apply_patches.sh`) and the `qcom-memshare`
+kernel patch, kept for reference only.

@@ -1,2 +1,15 @@
 bin
 pr_description.md
+
+# dropped in by enable_tbr.sh
+/packages/configs-mifi
+/packages/ledcontrol
+/packages/router-display
+/packages/fbtft-gc9107
+/packages/rootfs-resizer
+/msm89xx/patches/802-arm64-dts-qcom-add-msm8916-generic-mf68e.patch
+/msm89xx/patches/805-arm64-dts-qcom-add-msm8916-generic-m9s.patch
+/msm89xx/patches/901-fbtft-fb_gc9107.patch
+/msm89xx/image/devices-*.mk
+/diffconfig_m9s
+/diffconfig_mf68e

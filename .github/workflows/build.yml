@@ -4,14 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: 'Target device (all = build all devices)'
+        description: 'Target device (all = supported devices, all+tbr = also deprecated MF68E/M9S)'
         required: false
         type: choice
         default: all
         options:
           - all
+          - all+tbr
           - uz801
           - uf02
+          - m9s
+          - mf68e
 
 env:
   UPLOAD_FIRMWARE: true
@@ -42,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: ${{ fromJSON((inputs.device == 'all' || inputs.device == '') && '["uz801","uf02"]' || format('["{0}"]', inputs.device)) }}
+        device: ${{ fromJSON((inputs.device == 'all' || inputs.device == '') && '["uz801","uf02"]' || inputs.device == 'all+tbr' && '["uz801","uf02","m9s","mf68e"]' || format('["{0}"]', inputs.device)) }}
 
     steps:
     - name: Checkout
@@ -65,6 +68,12 @@ jobs:
         echo "Using OpenWrt ${{ needs.resolve-version.outputs.openwrt_version }}"
         git clone https://git.openwrt.org/openwrt/openwrt.git openwrt
         git -C openwrt checkout ${{ needs.resolve-version.outputs.openwrt_version }}
+
+    - name: Enable TBR device support
+      if: matrix.device == 'm9s' || matrix.device == 'mf68e'
+      run: |
+        chmod +x enable_tbr.sh
+        ./enable_tbr.sh
 
     - name: Load msm89xx target and packages
       run: |
