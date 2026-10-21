@@ -36,8 +36,10 @@
 #   OVERLAY           as --overlay, space-separated
 #   FORCE_CONFIG=1    as --force-config
 #   CLEAN=1           as --clean
-#   OPENWRT_VERSION   branch, tag, or tag pattern to clone (default main);
-#                     a pattern resolves to the newest matching tag
+#   OPENWRT_VERSION   branch, tag, or tag pattern to clone (default v25.12.*);
+#                     a pattern resolves to the newest matching tag. The
+#                     msm89xx target pins kernel 6.12, which OpenWrt main no
+#                     longer carries, so main does not build as it stands
 #   OPENWRT_DIR       checkout directory (default openwrt)
 #   EXTRA_CONFIG      extra .config lines, appended before make defconfig
 #
@@ -49,7 +51,7 @@ set -e
 cd "$(dirname "$0")"
 
 IMAGE="${IMAGE:-msm8916-openwrt-dev}"
-OPENWRT_VERSION="${OPENWRT_VERSION:-main}"
+OPENWRT_VERSION="${OPENWRT_VERSION:-v25.12.*}"
 OPENWRT_DIR="${OPENWRT_DIR:-openwrt}"
 DEVICE="${DEVICE:-}"
 OVERLAY="${OVERLAY:-}"
@@ -79,7 +81,7 @@ while [ $# -gt 0 ]; do
         --clean) CLEAN=1 ;;
         --shell|-s) SHELL_ONLY=1 ;;
         -h|--help)
-            sed -n '2,46p' "$0" | sed 's|^# \?||'
+            sed -n '2,48p' "$0" | sed 's|^# \?||'
             echo
             echo "Devices: $(known_devices)"
             exit 0
@@ -215,6 +217,33 @@ if [ -n "$NEED_DEFCONFIG" ]; then
     echo "==> make defconfig"
     in_docker bash -c "cd '$OPENWRT_DIR' && make defconfig"
 fi
+
+# A broken target Makefile does not fail the build: the metadata scan writes an
+# empty .targetinfo entry, CONFIG_TARGET_msm89xx never becomes a real symbol,
+# make defconfig drops it and falls back to OpenWrt's own default target, and
+# the build then happily produces an image for a device nobody asked for and
+# exits 0. The same goes for a .msm89xx-config stamp that no longer describes
+# .config. Check what we are about to build before spending hours on it.
+board=$(sed -n 's|^CONFIG_TARGET_BOARD="\(.*\)"$|\1|p' "$OPENWRT_DIR/.config")
+profile=$(sed -n 's|^CONFIG_TARGET_PROFILE="DEVICE_\(.*\)"$|\1|p' "$OPENWRT_DIR/.config")
+expected=$(sed -n 's|^CONFIG_TARGET_msm89xx_msm8916_DEVICE_\(.*\)=y$|\1|p' \
+    openwrt-*/configs/diffconfig_"$DEVICE")
+
+if [ "$board" != "msm89xx" ]; then
+    echo "Error: .config targets '$board', not msm89xx"
+    echo "       the target did not survive make defconfig - check that"
+    echo "       $OPENWRT_DIR/target/linux/generic/ carries the kernel version"
+    echo "       target/linux/msm89xx/Makefile pins (currently 6.12)"
+    exit 1
+fi
+
+if [ -n "$expected" ] && [ "$profile" != "$expected" ]; then
+    echo "Error: .config builds '$profile', but $DEVICE is '$expected'"
+    echo "       re-run with --force-config to reinstall the device config"
+    exit 1
+fi
+
+echo "==> Building $board profile $profile"
 
 echo "==> $* (in $OPENWRT_DIR)"
 in_docker bash -c 'cd "$1" && shift && exec "$@"' bash "$OPENWRT_DIR" "$@"

@@ -100,7 +100,7 @@ is built once and CI and local builds share one container image. It uploads the
 flashable images, the sysupgrade image, the package feed built with them, and
 the image builder and SDK.
 
-### Local (snapshot builds)
+### Local builds
 
 `build.sh` builds the container image, clones OpenWrt into `./openwrt`, applies
 the overlays, installs the feeds and the device config, then builds. The
@@ -109,7 +109,7 @@ runs. It needs a device, as `--device` or `$DEVICE`; `./build.sh --help` prints
 the options and the devices the overlays carry.
 
 ```
-./build.sh --device uz801             # build the images (OpenWrt main/snapshot)
+./build.sh --device uz801             # build the images (newest 25.12.x tag)
 ./build.sh --device uz801 --shell     # shell in the tree instead of building
 ./build.sh -d uz801 make menuconfig   # or any other command, run in the tree
 ```
@@ -119,8 +119,8 @@ Other devices, and other OpenWrt versions:
 ```
 ./build.sh -d uf02
 ./build.sh -d m9s                                  # pulls in openwrt-with-display
-OPENWRT_VERSION=v25.12.6 ./build.sh -d uz801
-OPENWRT_VERSION='v25.12.*' ./build.sh -d uz801     # newest 25.12.x tag
+OPENWRT_VERSION=v25.12.6 ./build.sh -d uz801       # a specific tag
+OPENWRT_VERSION=main ./build.sh -d uz801           # does not build, see below
 ```
 
 Building a second device reuses the tree: the config is swapped, `make
@@ -145,7 +145,7 @@ survives as long as the device stays the same (`--force-config` replaces it).
 Run `.github/dev/setup.sh --config <device> openwrt` by hand if you drive
 `make` yourself.
 
-> **Supported versions:** OpenWrt 25.12.x and current snapshots (kernel 6.12). OpenWrt 24.10.x (kernel 6.6) compiles but does not boot — the Makefile supports it via `KERNEL_FOR_24` (currently commented out) if someone wants to investigate further.
+> **Supported versions:** OpenWrt 25.12.x (kernel 6.12), which is why both `build.sh` and `build.yml` default to `v25.12.*`. Snapshots no longer build: OpenWrt main has moved to kernel 6.18 and dropped `target/linux/generic/kernel-6.12`, which the target pins, so the metadata scan of `target/linux/msm89xx/Makefile` fails and the target disappears from the config. Supporting main means adding a `config-6.18` and refreshing the target patches. OpenWrt 24.10.x (kernel 6.6) compiles but does not boot — the Makefile supports it via `KERNEL_FOR_24` (currently commented out) if someone wants to investigate further.
 
 ## Installation
 
