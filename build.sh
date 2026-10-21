@@ -190,13 +190,6 @@ echo "==> Applying overlays for $DEVICE"
 in_docker .github/dev/setup.sh --config "$DEVICE" "${overlay_args[@]}" \
     ${CLEAN:+--clean} "$OPENWRT_DIR"
 
-# the kernel is patched when it is prepared, so the patches the overlays just
-# changed only take effect once its build directory is gone
-if [ -n "$CLEAN" ] && [ -f "$OPENWRT_DIR/.config" ]; then
-    echo "==> make target/linux/clean"
-    in_docker bash -c "cd '$OPENWRT_DIR' && make target/linux/clean"
-fi
-
 if [ ! -d "$OPENWRT_DIR/feeds/luci" ]; then
     echo "==> Installing feeds"
     in_docker bash -c "
@@ -213,9 +206,32 @@ if [ ! -d "$OPENWRT_DIR/feeds/luci" ]; then
     "
 fi
 
+# setup.sh copies the overlays with cp -a, so a file it has just installed can
+# be older than the metadata make cached in tmp/ and make then keeps that cache.
+# The devices an overlay adds (m9s, mf68e, from image/devices-*.mk) are missing
+# from it, defconfig drops the device the config asks for and settles on the
+# target's default one, and the build then makes a uz801 image and calls it m9s.
+# Drop the cache whenever the overlays or the config changed.
+if [ -n "$NEED_DEFCONFIG" ] || [ -n "$CLEAN" ]; then
+    echo "==> Dropping the cached metadata"
+    rm -rf "$OPENWRT_DIR/tmp"
+fi
+
 if [ -n "$NEED_DEFCONFIG" ]; then
     echo "==> make defconfig"
     in_docker bash -c "cd '$OPENWRT_DIR' && make defconfig"
+fi
+
+# The kernel is patched when it is prepared, so the patches the overlays just
+# changed only take effect once its build directory is gone. This has to run
+# after make defconfig, not before: setup.sh installs the device config as the
+# bare diffconfig, and every make target except defconfig takes .config as it
+# finds it and runs menuconfig to fill in the rest, which cannot work with no
+# terminal ("Error opening terminal: unknown"). Only --clean with a change of
+# overlay reaches this, which is why it took a device with a display to show up.
+if [ -n "$CLEAN" ] && [ -f "$OPENWRT_DIR/.config" ]; then
+    echo "==> make target/linux/clean"
+    in_docker bash -c "cd '$OPENWRT_DIR' && make target/linux/clean"
 fi
 
 # A broken target Makefile does not fail the build: the metadata scan writes an

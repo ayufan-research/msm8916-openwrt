@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: 'Target device (all = uz801 and uf02)'
+        description: 'Target device (all = every device config the overlays carry)'
         required: false
         type: choice
         default: all

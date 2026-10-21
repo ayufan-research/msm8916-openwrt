@@ -53,6 +53,10 @@ endef
 TARGET_DEVICES += generic-uf02
 
 # Optional drop-in device definitions (see openwrt-with-display/readme.md)
-include $(sort $(wildcard $(TOPDIR)/target/linux/$(BOARD)/image/devices-*.mk))
+# relative, like the $(SUBTARGET).mk include above: $(BOARD) is empty while the
+# metadata is scanned, so an absolute path built from it matches nothing, and a
+# wildcard that matches nothing includes nothing without saying so. The devices
+# an overlay drops in here then never reach .targetinfo at all.
+include $(sort $(wildcard devices-*.mk))
 
 endif
