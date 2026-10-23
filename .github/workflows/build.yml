@@ -145,9 +145,12 @@ jobs:
 
     - name: Initialization environment
       run: |
+        echo "::group::Reclaiming disk space"
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
         sudo timedatectl set-timezone "$TZ"
+        df -h /
+        echo "::endgroup::"
 
     # Every device is built in this one job, swapping .config between them, so
     # the toolchain and the staging directory are built once. The configs are
@@ -166,6 +169,15 @@ jobs:
 
         echo "Building: $DEVICES"
         echo "DEVICES=$DEVICES" >> $GITHUB_ENV
+
+        # the header of the table every build step appends a row to, so the run
+        # page says what was built without a log being opened
+        {
+          echo "## OpenWrt $OPENWRT_VERSION"
+          echo
+          echo "| Device | Overlay | Result | Time |"
+          echo "| --- | --- | --- | --- |"
+        } >> $GITHUB_STEP_SUMMARY
 
     # build.sh appends this to the device config of the overlay it applies
     - name: Compose the extra configuration
@@ -245,6 +257,17 @@ jobs:
       if: contains(format(' {0} ', env.DEVICES), ' mf68e ')
       run: .github/dev/ci-build.sh mf68e
 
+    # The run page will not render a full OpenWrt build log, so the steps only
+    # print it inside collapsed groups and the whole thing is kept here.
+    - name: Upload the build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs-${{ inputs.device }}-${{ github.run_attempt }}
+        path: logs/*.log
+        if-no-files-found: ignore
+        retention-days: 7
+
     - name: Stamp the build
       if: always()
       run: echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -280,7 +303,10 @@ jobs:
     - name: ccache statistics
       if: always()
       # build.sh wants a device even when the command does not care about it
-      run: ./build.sh --device "${DEVICES%% *}" env CCACHE_DIR=.ccache ccache -s || true
+      run: |
+        echo "::group::ccache statistics"
+        ./build.sh --device "${DEVICES%% *}" env CCACHE_DIR=.ccache ccache -s || true
+        echo "::endgroup::"
 
     - name: Organize files
       id: organize
