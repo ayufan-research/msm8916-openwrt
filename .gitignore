@@ -1,3 +1,4 @@
 bin
 openwrt
 pr_description.md
+.ci-overlay

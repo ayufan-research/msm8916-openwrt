@@ -184,16 +184,21 @@ jobs:
           echo "GHA_EOF"
         } >> $GITHUB_ENV
 
-    - name: Cache OpenWrt downloads
-      uses: actions/cache@v4
+    # Restored and saved as separate steps, because actions/cache only saves
+    # when the job succeeds and a failed build is exactly when the hours of
+    # toolchain already compiled are worth keeping. The save steps run with
+    # if: always(), so a run that dies halfway still leaves them behind.
+    - name: Restore OpenWrt downloads
+      uses: actions/cache/restore@v4
       with:
         path: openwrt/dl
-        key: openwrt-dl-${{ needs.resolve-version.outputs.openwrt_version }}
+        key: openwrt-dl-${{ needs.resolve-version.outputs.openwrt_version }}-${{ github.run_id }}
         restore-keys: |
+          openwrt-dl-${{ needs.resolve-version.outputs.openwrt_version }}-
           openwrt-dl-
 
-    - name: Cache ccache
-      uses: actions/cache@v4
+    - name: Restore ccache
+      uses: actions/cache/restore@v4
       with:
         path: openwrt/.ccache
         key: openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-${{ github.run_id }}
@@ -201,48 +206,76 @@ jobs:
           openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-
           openwrt-ccache-
 
+    # The host tools and the cross toolchain depend on the OpenWrt version and
+    # the build container, not on our overlays, so they survive between runs.
+    # staging_dir/target-* is deliberately left out: it holds the stamps for the
+    # target packages, and restoring those would keep a changed package of ours
+    # from being rebuilt.
+    - name: Restore the toolchain
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          openwrt/staging_dir/host
+          openwrt/staging_dir/hostpkg
+          openwrt/staging_dir/toolchain-*
+          openwrt/build_dir/host
+          openwrt/build_dir/toolchain-*
+        key: openwrt-toolchain-${{ needs.resolve-version.outputs.openwrt_version }}-${{ hashFiles('.github/dev/Dockerfile') }}-${{ github.run_id }}
+        restore-keys: |
+          openwrt-toolchain-${{ needs.resolve-version.outputs.openwrt_version }}-${{ hashFiles('.github/dev/Dockerfile') }}-
+          openwrt-toolchain-${{ needs.resolve-version.outputs.openwrt_version }}-
+
     # build.sh builds the image from .github/dev/Dockerfile, fetches OpenWrt,
     # applies the overlay that owns the config, installs the feeds and that
-    # config, then runs the command in the tree. Called again with another
-    # DEVICE it swaps the config and keeps everything else.
-    - name: Build the firmware
-      id: compile
-      run: |
-        first=1
-        previous=
+    # config, then runs the command in the tree. One step per device, so the
+    # log shows at a glance which ones got built and which one broke.
+    - name: Build uf02
+      if: contains(format(' {0} ', env.DEVICES), ' uf02 ')
+      run: .github/dev/ci-build.sh uf02
 
-        for device in $DEVICES; do
-          owner=$(ls -d openwrt-*/configs/diffconfig_"$device" | head -1)
-          owner="${owner%%/*}"
+    - name: Build uz801
+      if: contains(format(' {0} ', env.DEVICES), ' uz801 ')
+      run: .github/dev/ci-build.sh uz801
 
-          # the overlay this device needs on top of openwrt-base, if any
-          overlay=
-          [ "$owner" = "openwrt-base" ] || overlay="$owner"
+    - name: Build m9s
+      if: contains(format(' {0} ', env.DEVICES), ' m9s ')
+      run: .github/dev/ci-build.sh m9s
 
-          # a different overlay means the tree has to be undone first
-          clean=
-          if [ -z "$first" ] && [ "$overlay" != "$previous" ]; then
-            clean=1
-          fi
+    - name: Build mf68e
+      if: contains(format(' {0} ', env.DEVICES), ' mf68e ')
+      run: .github/dev/ci-build.sh mf68e
 
-          echo "::group::$device${overlay:+ ($overlay)}${clean:+ [clean]}"
-          export DEVICE="$device" OVERLAY="$overlay" CLEAN="$clean"
+    - name: Stamp the build
+      if: always()
+      run: echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-          ./build.sh make download -j8
-          find openwrt/dl -size -1024c -exec rm -f {} \; || true
+    # if: always(), so a failed build still leaves the downloads, the ccache and
+    # the toolchain it did get through behind for the next run to start from.
+    - name: Save OpenWrt downloads
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: openwrt/dl
+        key: openwrt-dl-${{ needs.resolve-version.outputs.openwrt_version }}-${{ github.run_id }}
 
-          # the tree is set up now, do not undo it again for the build itself
-          export CLEAN=
+    - name: Save ccache
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: openwrt/.ccache
+        key: openwrt-ccache-${{ needs.resolve-version.outputs.openwrt_version }}-${{ github.run_id }}
 
-          ./build.sh make -j$(nproc) || ./build.sh make -j1 || ./build.sh make -j1 V=s
-          echo "::endgroup::"
-
-          first=
-          previous="$overlay"
-        done
-
-        echo "status=success" >> $GITHUB_OUTPUT
-        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+    - name: Save the toolchain
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          openwrt/staging_dir/host
+          openwrt/staging_dir/hostpkg
+          openwrt/staging_dir/toolchain-*
+          openwrt/build_dir/host
+          openwrt/build_dir/toolchain-*
+        key: openwrt-toolchain-${{ needs.resolve-version.outputs.openwrt_version }}-${{ hashFiles('.github/dev/Dockerfile') }}-${{ github.run_id }}
 
     - name: ccache statistics
       if: always()
